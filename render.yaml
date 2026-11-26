@@ -1,0 +1,28 @@
+# Render (free plan, no card) par deploy ke liye.
+# Repo push karo -> Render me "New > Blueprint" -> ye file auto-detect hogi.
+services:
+  - type: web
+    name: opencode-telegram-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ACCESS_CODE
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DEFAULT_MODEL
+        value: opencode/glm-5.3-flash-free
+      - key: AUTO_APPROVE
+        value: "true"
+      - key: OPENCODE_WORKDIR
+        value: /workspace
+      - key: STATE_DB
+        value: /app/data/state.db
+      # Render ka public URL yahan daalo (deploy ke baad milta hai)
+      - key: WEBHOOK_URL
+        sync: false

@@ -1,0 +1,19 @@
+[Unit]
+Description=OpenCode Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/opencode-telegram-bot
+EnvironmentFile=/home/ubuntu/opencode-telegram-bot/.env
+Environment=PATH=/home/ubuntu/.opencode/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/opencode-telegram-bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/ubuntu/opencode-telegram-bot/bot.log
+StandardError=append:/home/ubuntu/opencode-telegram-bot/bot.log
+
+[Install]
+WantedBy=multi-user.target

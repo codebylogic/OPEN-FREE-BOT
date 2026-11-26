@@ -1,0 +1,135 @@
+# Bot ko GitHub Actions par chalane ke liye (card-free, public repo ke minutes free).
+#
+# Kaise chalta hai: har 6 ghante me ek job, bot ~5h 40m chalta hai, phir gracefully
+# band hota hai. Session/model state cache me save hota hai, to agla run wahi
+# session continue karta hai.
+#
+# Zaroori secrets (Settings > Secrets and variables > Actions):
+#   BOT_TOKEN      = BotFather ka token                      [zaroori]
+#   ACCESS_CODE    = /start ka secret code                   [zaroori]
+#   ALLOWED_USER_IDS = apna Telegram numeric id (optional)
+#
+# Optional — opencode kis repo par kaam kare:
+#   PROJECT_REPO   = "user/repo"  (khali = koi project nahi, workspace khali)
+#   PROJECT_TOKEN  = PAT with "repo" scope (sirf private/dusre repo ke liye;
+#                    public repo ya same repo ke liye khali chhodo)
+#   Repository variable AUTO_PUSH = "true"  -> changes wapas us repo me push honge
+#                    (set nahi = sirf patch artifact milega, push nahi)
+
+name: bot
+
+on:
+  schedule:
+    - cron: "0 */6 * * *" # har 6 ghante (UTC). GitHub cron 5-15 min late chal sakta hai.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Ek hi time par do bot na chalein — warna Telegram "Conflict: getUpdates" deta hai.
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355 # GitHub max 360; bot 340 min par khud rukega
+    env:
+      PROJECT_REPO: ${{ secrets.PROJECT_REPO }}
+      PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      AUTO_PUSH: ${{ vars.AUTO_PUSH }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      # session/model state runs ke beech le jao (workspace har run fresh clone hota hai)
+      - name: Restore bot state
+        uses: actions/cache@v4
+        with:
+          path: data/state.db
+          key: bot-state-${{ github.run_id }}
+          restore-keys: |
+            bot-state-
+
+      - name: Install opencode CLI
+        run: npm install -g opencode-ai
+
+      - name: Install python deps
+        run: pip install -r requirements.txt
+
+      - name: Clone project repo (optional)
+        run: |
+          mkdir -p workspace
+          if [ -z "$PROJECT_REPO" ]; then
+            echo "PROJECT_REPO set nahi hai — workspace khali rahega (bot repo par kaam nahi hoga)"
+            exit 0
+          fi
+          TOKEN="${PROJECT_TOKEN:-${{ github.token }}}"
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${PROJECT_REPO}.git" workspace
+          git -C workspace config user.email "opencode-bot@users.noreply.github.com"
+          git -C workspace config user.name "opencode-bot"
+          echo "PROJECT_READY=1" >> "$GITHUB_ENV"
+          echo "project clone ho gaya: $PROJECT_REPO"
+
+      - name: Sanity check
+        run: |
+          python --version
+          opencode --version
+          python bot.py --version
+          opencode models | head -5
+
+      - name: Run bot (5h 40m, phir graceful stop)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ACCESS_CODE: ${{ secrets.ACCESS_CODE }}
+          ALLOWED_USER_IDS: ${{ secrets.ALLOWED_USER_IDS }}
+          OPENCODE_WORKDIR: ${{ github.workspace }}/workspace
+          STATE_DB: ${{ github.workspace }}/data/state.db
+          DEFAULT_MODEL: opencode/glm-5.3-flash-free
+          AUTO_APPROVE: "true"
+          RUN_TIMEOUT: "600"
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$ACCESS_CODE" ]; then
+            echo "::error::BOT_TOKEN / ACCESS_CODE secret set nahi hai (Settings > Secrets > Actions)"
+            exit 1
+          fi
+          mkdir -p data workspace
+          # 20,400 s = 5h 40m. timeout ke baad bhi job success rahega, isliye cache save hoga.
+          timeout --signal=INT --kill-after=60 20400 python bot.py || true
+          echo "bot run khatam, agla cron 6 ghante me"
+
+      - name: Save changes as patch
+        if: env.PROJECT_READY == '1'
+        run: |
+          git -C workspace add -A
+          git -C workspace diff --cached > bot-changes.patch || true
+          echo "patch size: $(wc -c < bot-changes.patch) bytes"
+
+      - uses: actions/upload-artifact@v4
+        if: env.PROJECT_READY == '1'
+        with:
+          name: bot-changes
+          path: bot-changes.patch
+          if-no-files-found: ignore
+
+      - name: Push changes back (sirf AUTO_PUSH=true par)
+        if: env.PROJECT_READY == '1' && env.AUTO_PUSH == 'true'
+        run: |
+          git -C workspace add -A
+          if git -C workspace diff --cached --quiet; then
+            echo "koi change nahi — push skip"
+            exit 0
+          fi
+          git -C workspace commit -m "bot: automated changes ($(date -u +%F))"
+          git -C workspace push
+          echo "changes push ho gaye"

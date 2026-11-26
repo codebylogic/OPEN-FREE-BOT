@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    container_name: opencode-telegram-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data          # state db
+      - ./workspace:/workspace    # jis repo par kaam karna hai
+    # koi inbound port nahi chahiye — bot khud Telegram se long polling karta hai
