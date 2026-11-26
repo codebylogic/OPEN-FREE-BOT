@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+          
 
       # session/model state runs ke beech le jao (workspace har run fresh clone hota hai)
       - name: Restore bot state
